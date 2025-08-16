@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>P2P Text + Video Chat</title>
+<style>
+body{font-family:sans-serif; padding:20px;}
+textarea, input, button{width:40%; padding:8px; margin:4px 0;}
+#chat{border:1px solid #ccc; padding:10px; height:200px; overflow:auto;}
+video{width:40%; margin-bottom:10px;}
+#status{padding:4px; margin:4px 0; font-weight:bold;}
+</style>
+</head>
+<body>
+<h2>P2P Text + Video Chat</h2>
+<div id="status">Status: Not Connected</div>
+<video id="localVideo" autoplay muted playsinline></video>
+<video id="remoteVideo" autoplay playsinline></video>
+<textarea id="localSDP" placeholder="Your SDP offer/answer"></textarea>
+<textarea id="remoteSDP" placeholder="Paste remote SDP here"></textarea>
+<button id="createOffer">Create Offer</button>
+<button id="setRemote">Set Remote SDP</button>
+<div id="chat"></div>
+<input id="msg" placeholder="Type message..." />
+<button id="send">Send</button>
+
+<script>
+let pc=null, dc=null;
+const localVideo=document.getElementById('localVideo');
+const remoteVideo=document.getElementById('remoteVideo');
+const status=document.getElementById('status');
+let localStream=null;
+
+function logChat(msg,self=false){
+  const div=document.createElement('div');
+  div.textContent=(self?'You: ':'Friend: ')+msg;
+  document.getElementById('chat').appendChild(div);
+  document.getElementById('chat').scrollTop=1e10;
+}
+
+async function startCamera(){
+  localStream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+  localVideo.srcObject=localStream;
+}
+startCamera();
+
+function updateStatus(text){ status.textContent='Status: '+text; }
+
+function sendMessage(){
+  const msg=document.getElementById('msg').value;
+  if(dc && dc.readyState==='open'){ dc.send(msg); logChat(msg,true); document.getElementById('msg').value=''; }
+}
+
+document.getElementById('send').onclick=sendMessage;
+// Send on Enter
+document.getElementById('msg').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); sendMessage(); } });
+
+document.getElementById('createOffer').onclick=async()=>{
+  pc=new RTCPeerConnection();
+  updateStatus('Connecting...');
+
+  dc=pc.createDataChannel('chat');
+  dc.onopen=()=>updateStatus('Connected');
+  dc.onclose=()=>updateStatus('Disconnected');
+  dc.onmessage=e=>logChat(e.data);
+
+  pc.ondatachannel=e=>{ dc=e.channel; dc.onmessage=e=>logChat(e.data); dc.onopen=()=>updateStatus('Connected'); dc.onclose=()=>updateStatus('Disconnected'); };
+  pc.ontrack=e=>{ remoteVideo.srcObject=e.streams[0]; };
+  pc.oniceconnectionstatechange=()=>updateStatus(pc.iceConnectionState);
+
+  localStream.getTracks().forEach(track=>pc.addTrack(track,localStream));
+
+  pc.onicecandidate=e=>{ if(e.candidate===null){ document.getElementById('localSDP').value=JSON.stringify(pc.localDescription); } };
+
+  const offer=await pc.createOffer({offerToReceiveVideo:true,offerToReceiveAudio:true});
+  await pc.setLocalDescription(offer);
+};
+
+document.getElementById('setRemote').onclick=async()=>{
+  const remote=JSON.parse(document.getElementById('remoteSDP').value);
+  await pc.setRemoteDescription(remote);
+  if(remote.type==='offer'){
+    const answer=await pc.createAnswer({offerToReceiveVideo:true,offerToReceiveAudio:true});
+    await pc.setLocalDescription(answer);
+    document.getElementById('localSDP').value=JSON.stringify(pc.localDescription);
+  }
+};
+</script>
+</body>
+</html>
